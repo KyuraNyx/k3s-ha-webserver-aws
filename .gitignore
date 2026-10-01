@@ -1,0 +1,23 @@
+# Build artifacts
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfplan
+
+# SSH Keys – NEVER commit private keys
+*.pem
+*.pub
+id_rsa
+id_rsa.pub
+
+# PDF Report
+*.pdf
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~

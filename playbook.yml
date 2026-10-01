@@ -1,0 +1,181 @@
+---
+
+# =============================================================
+# Play 1: Membuat Pengguna Baru (Berlaku untuk semua node)
+# =============================================================
+- name: Pengaturan Pengguna Baru
+  hosts: all
+  become: yes
+  tasks:
+    - name: Membuat pengguna 'admin_app'
+      user:
+        name: admin_app
+        state: present
+        create_home: yes
+        shell: /bin/bash
+
+# =============================================================
+# Play 2: Konfigurasi Penyimpanan LVM di Node Worker
+# =============================================================
+- name: Pengaturan Penyimpanan Ekstra (LVM)
+  hosts: workers
+  become: yes
+  tasks:
+    - name: Membuat Volume Group 'vg_data' dari disk /dev/xvdf
+      lvg:
+        vg: vg_data
+        pvs: /dev/xvdf
+
+    - name: Membuat Logical Volume 'lv_app' sebesar 100%
+      lvol:
+        vg: vg_data
+        lv: lv_app
+        size: 100%VG
+
+    - name: Memformat partisi dengan ext4
+      filesystem:
+        fstype: ext4
+        dev: /dev/vg_data/lv_app
+
+    - name: Membuat direktori mount point /data_app
+      file:
+        path: /data_app
+        state: directory
+
+    - name: Melakukan mount partisi ke /data_app
+      mount:
+        path: /data_app
+        src: /dev/vg_data/lv_app
+        fstype: ext4
+        state: mounted
+
+# =============================================================
+# Play 3: Instalasi K3s - Master Node
+# =============================================================
+- name: Instalasi Kubernetes Master
+  hosts: master
+  become: yes
+  tasks:
+    - name: Mengunduh dan memasang K3s (Master)
+      shell: curl -sfL https://get.k3s.io | sh -
+
+    - name: Mengambil token K3s untuk Node Worker
+      command: cat /var/lib/rancher/k3s/server/node-token
+      register: k3s_token
+
+    - name: Menyimpan token ke memori Ansible
+      set_fact:
+        token_k3s: "{{ k3s_token.stdout }}"
+
+# =============================================================
+# Play 4: Instalasi K3s - Worker Nodes (bergabung ke klaster)
+# =============================================================
+- name: Menggabungkan Worker ke Klaster Kubernetes
+  hosts: workers
+  become: yes
+  tasks:
+    - name: Mengunduh dan memasang K3s (Worker)
+      shell: >
+        curl -sfL https://get.k3s.io |
+        K3S_URL=https://{{ groups['master'][0] }}:6443
+        K3S_TOKEN={{ hostvars[groups['master'][0]]['token_k3s'] }}
+        sh -
+
+# =============================================================
+# Play 5: Deploy Aplikasi Web Nginx ke Klaster Kubernetes
+# =============================================================
+- name: Menjalankan Nginx di Klaster
+  hosts: master
+  become: yes
+  tasks:
+    - name: Membuat file manifest deployment Nginx
+      copy:
+        dest: /tmp/nginx-deployment.yaml
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: nginx-deployment
+          spec:
+            replicas: 2
+            selector:
+              matchLabels:
+                app: nginx
+            template:
+              metadata:
+                labels:
+                  app: nginx
+              spec:
+                containers:
+                - name: nginx
+                  image: nginx:latest
+                  ports:
+                  - containerPort: 80
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: nginx-service
+          spec:
+            type: NodePort
+            selector:
+              app: nginx
+            ports:
+              - port: 80
+                targetPort: 80
+                nodePort: 30080
+
+    - name: Menerapkan manifest ke klaster K3s
+      command: k3s kubectl apply -f /tmp/nginx-deployment.yaml
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+# =============================================================
+# Play 6: Konfigurasi Load Balancer (HAProxy)
+# =============================================================
+- name: Pengaturan Load Balancer
+  hosts: loadbalancer
+  become: yes
+  tasks:
+    - name: Memasang HAProxy
+      apt:
+        name: haproxy
+        state: present
+        update_cache: yes
+
+    - name: Mengatur file konfigurasi HAProxy
+      copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: |
+          global
+              log /dev/log    local0
+              log /dev/log    local1 notice
+              chroot /var/lib/haproxy
+              user haproxy
+              group haproxy
+              daemon
+
+          defaults
+              log     global
+              mode    http
+              option  httplog
+              option  dontlognull
+              timeout connect 5000
+              timeout client  50000
+              timeout server  50000
+
+          frontend http_front
+              bind *:80
+              default_backend k3s_nodes
+
+          backend k3s_nodes
+              balance roundrobin
+              server worker1 {{ groups['workers'][0] }}:30080 check
+              server worker2 {{ groups['workers'][1] }}:30080 check
+      notify: restart haproxy
+
+  handlers:
+    - name: restart haproxy
+      service:
+        name: haproxy
+        state: restarted
