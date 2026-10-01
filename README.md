@@ -35,9 +35,6 @@ The infrastructure spans four AWS EC2 `t2.micro` nodes (Ubuntu 24.04) managed by
 
 ## 🏗️ System Architecture
 
-<p align="center">
-  <img src="assets/architecture_diagram.png" alt="Detailed Architecture Diagram" width="750">
-</p>
 
 ```
 Internet / Users
