@@ -1,8 +1,6 @@
 # ☸️ High-Availability Web Server Infrastructure on AWS with Kubernetes (K3s), Terraform & Ansible
 
-<p align="center">
-  <img src="assets/system_architecture_overview.png" alt="System Architecture" width="780">
-</p>
+
 
 <p align="center">
   <img src="https://img.shields.io/badge/IaC-Terraform-7B42BC?style=for-the-badge&logo=terraform" alt="Terraform">
